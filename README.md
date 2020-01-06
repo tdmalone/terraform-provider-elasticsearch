@@ -28,6 +28,34 @@ provider "elasticsearch" {
     cacert_file = "/path/to/ca.crt" # when connecting to elastic with self-signed certificate
     sign_aws_requests = true # only needs to be true if your domain access policy includes IAM users or roles
 }
+```
+
+Examples of resources can be found in the examples directory. The currently supported opensource Elasticsearch, XPack and OpenDistro resources are described below.
+
+### Elasticsearch
+
+- [ ] []()
+- [ ] []()
+- [ ] []()
+- [ ] []()
+
+### Kibana
+
+- [x] Kibana Object
+  - [ ] Visualization
+  - [ ] Search
+  - [ ] Dashboard
+
+### XPack
+
+- [ ] [Security]() (Role/Role Mapping/User)
+
+### OpenDistro
+
+- [x] [Alerting]() (Destinations/Monitors)
+- [ ] [Security]() (Role/Role Mapping)
+- [ ] [Index State Management](https://opendistro.github.io/for-elasticsearch-docs/docs/ism/api/)
+
 
 resource "elasticsearch_index_template" "test" {
   name = "terraform-test"
