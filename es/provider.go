@@ -10,9 +10,8 @@ import (
 	"net/url"
 	"regexp"
 
+	"github.com/aws/aws-sdk-go/aws"
 	awscredentials "github.com/aws/aws-sdk-go/aws/credentials"
-	awsec2rolecreds "github.com/aws/aws-sdk-go/aws/credentials/ec2rolecreds"
-	awsec2metadata "github.com/aws/aws-sdk-go/aws/ec2metadata"
 	awssession "github.com/aws/aws-sdk-go/aws/session"
 	awssigv4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/deoxxa/aws_signing_client"
@@ -80,6 +79,13 @@ func Provider() terraform.ResourceProvider {
 				Description: "The session token for use with AWS Elasticsearch Service domains",
 			},
 
+			"aws_profile": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				Default:     "",
+				Description: "The AWS profile for use with AWS Elasticsearch Service domains",
+			},
+
 			"cacert_file": {
 				Type:        schema.TypeString,
 				Optional:    true,
@@ -113,22 +119,32 @@ func Provider() terraform.ResourceProvider {
 				Default:     true,
 				Description: "Enable signing of AWS elasticsearch requests",
 			},
+			"elasticsearch_version": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				Default:     "",
+				Description: "ElasticSearch Version",
+			},
 		},
 
 		ResourcesMap: map[string]*schema.Resource{
-			"elasticsearch_destination":            resourceElasticsearchDestination(),
-			"elasticsearch_index":                  resourceElasticsearchIndex(),
-			"elasticsearch_index_lifecycle_policy": resourceElasticsearchIndexLifecyclePolicy(),
-			"elasticsearch_index_template":         resourceElasticsearchIndexTemplate(),
-			"elasticsearch_ingest_pipeline":        resourceElasticsearchIngestPipeline(),
-			"elasticsearch_kibana_object":          resourceElasticsearchKibanaObject(),
-			"elasticsearch_monitor":                resourceElasticsearchMonitor(),
-			"elasticsearch_snapshot_repository":    resourceElasticsearchSnapshotRepository(),
-			"elasticsearch_watch":                  resourceElasticsearchDeprecatedWatch(),
-			"elasticsearch_xpack_role":             resourceElasticsearchXpackRole(),
-			"elasticsearch_xpack_role_mapping":     resourceElasticsearchXpackRoleMapping(),
-			"elasticsearch_xpack_user":             resourceElasticsearchXpackUser(),
-			"elasticsearch_xpack_watch":            resourceElasticsearchXpackWatch(),
+			"elasticsearch_destination":                   resourceElasticsearchDestination(),
+			"elasticsearch_index":                         resourceElasticsearchIndex(),
+			"elasticsearch_index_lifecycle_policy":        resourceElasticsearchIndexLifecyclePolicy(),
+			"elasticsearch_index_template":                resourceElasticsearchIndexTemplate(),
+			"elasticsearch_ingest_pipeline":               resourceElasticsearchIngestPipeline(),
+			"elasticsearch_kibana_object":                 resourceElasticsearchKibanaObject(),
+			"elasticsearch_monitor":                       resourceElasticsearchMonitor(),
+			"elasticsearch_snapshot_repository":           resourceElasticsearchSnapshotRepository(),
+			"elasticsearch_watch":                         resourceElasticsearchDeprecatedWatch(),
+			"elasticsearch_opendistro_ism_policy":         resourceElasticsearchOpenDistroISMPolicy(),
+			"elasticsearch_opendistro_ism_policy_mapping": resourceElasticsearchOpenDistroISMPolicyMapping(),
+			"elasticsearch_opendistro_roles_mapping":      resourceElasticsearchOpenDistroRolesMapping(),
+			"elasticsearch_opendistro_role":               resourceElasticsearchOpenDistroRole(),
+			"elasticsearch_xpack_role":                    resourceElasticsearchXpackRole(),
+			"elasticsearch_xpack_role_mapping":            resourceElasticsearchXpackRoleMapping(),
+			"elasticsearch_xpack_user":                    resourceElasticsearchXpackUser(),
+			"elasticsearch_xpack_watch":                   resourceElasticsearchXpackWatch(),
 		},
 
 		DataSourcesMap: map[string]*schema.Resource{
@@ -150,6 +166,7 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	password := d.Get("password").(string)
 	parsedUrl, err := url.Parse(rawUrl)
 	signAWSRequests := d.Get("sign_aws_requests").(bool)
+	esVersion := d.Get("elasticsearch_version").(string)
 	if err != nil {
 		return nil, err
 	}
@@ -183,13 +200,16 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	}
 	relevantClient = client
 
-	// Use the v7 client to ping the cluster to determine the version
-	info, _, err := client.Ping(rawUrl).Do(context.TODO())
-	if err != nil {
-		return nil, err
+	// Use the v7 client to ping the cluster to determine the version if one was not provided
+	if esVersion == "" {
+		info, _, err := client.Ping(rawUrl).Do(context.TODO())
+		if err != nil {
+			return nil, err
+		}
+		esVersion = info.Version.Number
 	}
 
-	if info.Version.Number < "7.0.0" && info.Version.Number >= "6.0.0" {
+	if esVersion < "7.0.0" && esVersion >= "6.0.0" {
 		log.Printf("[INFO] Using ES 6")
 		opts := []elastic6.ClientOptionFunc{
 			elastic6.SetURL(rawUrl),
@@ -216,7 +236,7 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-	} else if info.Version.Number < "6.0.0" && info.Version.Number >= "5.0.0" {
+	} else if esVersion < "6.0.0" && esVersion >= "5.0.0" {
 		log.Printf("[INFO] Using ES 5")
 		opts := []elastic5.ClientOptionFunc{
 			elastic5.SetURL(rawUrl),
@@ -242,29 +262,40 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-	} else if info.Version.Number < "5.0.0" {
+	} else if esVersion < "5.0.0" {
 		return nil, errors.New("ElasticSearch is older than 5.0.0!")
 	}
 
 	return relevantClient, nil
 }
 
+func awsSession(region string, d *schema.ResourceData) *awssession.Session {
+	aws_access_key_id := d.Get("aws_access_key").(string)
+	aws_secret_access_key := d.Get("aws_secret_key").(string)
+	aws_session_token := d.Get("aws_token").(string)
+	aws_profile := d.Get("aws_profile").(string)
+
+	sessOpts := awssession.Options{
+		Config: aws.Config{
+			Region: aws.String(region),
+		},
+	}
+	// 1. access keys take priority
+	// 2. next is a profile (for assume role)
+	// 3. let the default credentials provider figure out the rest (env, ec2, etc..)
+	//
+	// note: if #1 is chosen, then no further providers will be tested, since we've overridden the credentials with just a static provider
+	if aws_access_key_id != "" {
+		sessOpts.Config.Credentials = awscredentials.NewStaticCredentials(aws_access_key_id, aws_secret_access_key, aws_session_token)
+	} else if aws_profile != "" {
+		sessOpts.Profile = aws_profile
+	}
+
+	return awssession.Must(awssession.NewSessionWithOptions(sessOpts))
+}
+
 func awsHttpClient(region string, d *schema.ResourceData) *http.Client {
-	creds := awscredentials.NewChainCredentials([]awscredentials.Provider{
-		&awscredentials.StaticProvider{
-			Value: awscredentials.Value{
-				AccessKeyID:     d.Get("aws_access_key").(string),
-				SecretAccessKey: d.Get("aws_secret_key").(string),
-				SessionToken:    d.Get("aws_token").(string),
-			},
-		},
-		&awscredentials.EnvProvider{},
-		&awscredentials.SharedCredentialsProvider{},
-		&awsec2rolecreds.EC2RoleProvider{
-			Client: awsec2metadata.New(awssession.Must(awssession.NewSession())),
-		},
-	})
-	signer := awssigv4.NewSigner(creds)
+	signer := awssigv4.NewSigner(awsSession(region, d).Config.Credentials)
 	client, _ := aws_signing_client.New(signer, nil, "es", region)
 
 	return client

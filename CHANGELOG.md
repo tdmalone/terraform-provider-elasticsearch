@@ -1,7 +1,23 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Bump terraform plugin sdk to 1.12.0.
+- Add aws profile authentication option
+
+## [1.1.1] - 2020-05-09
+### Added
+- Make ping to elasticsearch during provider config optional
+
+## [1.1.0] - 2020-05-04
+
+### Added
+- Add OpenDistro Index State Management (https://opendistro.github.io/for-elasticsearch-docs/docs/ism/api/).
+- Add OpenDistro Roles and Role Mappings.
+
+### Changed
 - Clarify naming, watch resources are from xpack.
+
 
 ## [1.0.0] - 2020-03-18
 
