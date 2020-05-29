@@ -31,6 +31,9 @@ func resourceElasticsearchKibanaObject() *schema.Resource {
 				Default:  ".kibana",
 			},
 		},
+		Importer: &schema.ResourceImporter{
+			State: schema.ImportStatePassthrough,
+		},
 	}
 }
 
